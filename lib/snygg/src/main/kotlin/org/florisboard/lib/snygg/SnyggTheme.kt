@@ -94,11 +94,12 @@ data class SnyggTheme internal constructor(
 
     companion object {
         /**
-         * Black or white — whichever contrasts better against [bg]. 0.179 is the WCAG relative-luminance
-         * crossover where black and white give equal contrast, so it picks the more legible one.
+         * White by default, switching to black only for *very light* accent colors. The threshold is set
+         * high on purpose (not the WCAG 0.179 contrast crossover) so ordinary accents like the default
+         * light-blue keep white foreground, and only near-white/pastel colors flip to black.
          */
         private fun onColorFor(bg: Color): Color =
-            if (bg.luminance() >= 0.179f) Color.Black else Color.White
+            if (bg.luminance() > 0.7f) Color.Black else Color.White
 
         internal fun compileFrom(
             stylesheet: SnyggStylesheet,

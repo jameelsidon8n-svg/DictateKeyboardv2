@@ -935,15 +935,13 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
         else ContextCompat.getColor(context, colorRes)
 
     /**
-     * Black or white — whichever contrasts better against [bg]. Used to tint the glyph/text sitting on the
-     * button so it stays legible when the user picks a very light accent color (issue: light accent made the
-     * white mic icon invisible).
+     * White by default, switching to black only for *very light* button colors, so the glyph stays legible
+     * on a near-white accent without flipping on ordinary colors like the default light-blue. Threshold is
+     * intentionally high (not the WCAG contrast crossover).
      */
     private fun contrastForeground(bg: Int): Int {
         val opaque = bg or 0xFF000000.toInt()
-        return if (ColorUtils.calculateContrast(Color.BLACK, opaque) >=
-            ColorUtils.calculateContrast(Color.WHITE, opaque)
-        ) Color.BLACK else Color.WHITE
+        return if (ColorUtils.calculateLuminance(opaque) > 0.7) Color.BLACK else Color.WHITE
     }
 
     private fun dp(value: Int): Int =

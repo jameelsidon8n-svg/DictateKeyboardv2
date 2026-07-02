@@ -10,6 +10,7 @@
 
 package dev.patrickgold.florisboard.app.settings.dictate
 
+import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -35,11 +36,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Autorenew
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -66,7 +70,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import dev.patrickgold.florisboard.R
+import dev.patrickgold.florisboard.app.LocalNavController
+import dev.patrickgold.florisboard.app.Routes
 import dev.patrickgold.florisboard.dictate.DictateController
+import dev.patrickgold.florisboard.dictate.data.prompts.PromptLibraryContribution
 import dev.patrickgold.florisboard.dictate.data.prompts.PromptModel
 import dev.patrickgold.florisboard.dictate.data.prompts.PromptsDatabaseHelper
 import dev.patrickgold.florisboard.lib.compose.FlorisScreen
@@ -100,6 +107,7 @@ fun DictatePromptsScreen(
     scrollable = false
 
     val context = LocalContext.current
+    val navController = LocalNavController.current
     val db = remember { PromptsDatabaseHelper.getInstance(context) }
     val scope = rememberCoroutineScope()
     val prompts = remember { mutableStateListOf<PromptModel>() }
@@ -108,6 +116,8 @@ fun DictatePromptsScreen(
     var editorTarget by remember { mutableStateOf<PromptModel?>(null) }
     // Prompts parsed from an import file, awaiting the user's replace-vs-add choice.
     var pendingImport by remember { mutableStateOf<List<PromptModel>?>(null) }
+    // A prompt the user chose to contribute to the community library, awaiting the "open GitHub" confirm.
+    var pendingShare by remember { mutableStateOf<PromptModel?>(null) }
 
     fun toast(resId: Int) = Toast.makeText(context, resId, Toast.LENGTH_SHORT).show()
 
@@ -210,20 +220,33 @@ fun DictatePromptsScreen(
         var draggingId by remember { mutableStateOf<Int?>(null) }
         var dragOffset by remember { mutableStateOf(0f) }
 
-        if (prompts.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    modifier = Modifier.padding(horizontal = 32.dp),
-                    text = stringRes(R.string.dictate__prompts_empty),
-                )
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .florisScrollbar(listState, isVertical = true),
-                state = listState,
-            ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Always-visible entry into the community library, pinned above the user's own prompts so it
+            // is discoverable without opening the overflow menu (issue #105).
+            CommunityLibraryEntry(
+                onClick = { navController.navigate(Routes.Settings.DictatePromptLibrary) },
+            )
+
+            if (prompts.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        modifier = Modifier.padding(horizontal = 32.dp),
+                        text = stringRes(R.string.dictate__prompts_empty),
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .florisScrollbar(listState, isVertical = true),
+                    state = listState,
+                ) {
                 itemsIndexed(prompts, key = { _, it -> it.id }) { index, prompt ->
                     val isDragging = draggingId == prompt.id
                     // The whole row both edits (tap) and reorders (long-press drag); the handle is a
@@ -299,6 +322,7 @@ fun DictatePromptsScreen(
                         }
                     }
                 }
+                }
             }
         }
 
@@ -307,6 +331,9 @@ fun DictatePromptsScreen(
             PromptEditorDialog(
                 initial = target,
                 onDismiss = { editorTarget = null },
+                onShare = { name, text, requiresSelection, autoApply ->
+                    pendingShare = PromptModel(0, 0, name, text, requiresSelection, autoApply)
+                },
                 onSave = { name, text, requiresSelection, autoApply ->
                     scope.launch {
                         withContext(Dispatchers.IO) {
@@ -368,6 +395,41 @@ fun DictatePromptsScreen(
                 },
             )
         }
+
+        val share = pendingShare
+        if (share != null) {
+            ShareConfirmDialog(
+                onDismiss = { pendingShare = null },
+                onConfirm = {
+                    val url = PromptLibraryContribution.buildSubmissionUrl(share)
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            },
+                        )
+                    }.onFailure { toast(R.string.dictate__prompts_import_failed) }
+                    pendingShare = null
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShareConfirmDialog(
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    JetPrefAlertDialog(
+        title = stringRes(R.string.dictate__prompt_share_title),
+        confirmLabel = stringRes(R.string.dictate__prompt_share_continue),
+        onConfirm = onConfirm,
+        dismissLabel = stringRes(R.string.action__cancel),
+        onDismiss = onDismiss,
+        allowOutsideDismissal = true,
+    ) {
+        Text(text = stringRes(R.string.dictate__prompt_share_message))
     }
 }
 
@@ -448,6 +510,7 @@ private fun ImportModeDialog(
 private fun PromptEditorDialog(
     initial: PromptModel,
     onDismiss: () -> Unit,
+    onShare: (name: String, prompt: String, requiresSelection: Boolean, autoApply: Boolean) -> Unit,
     onSave: (name: String, prompt: String, requiresSelection: Boolean, autoApply: Boolean) -> Unit,
     onDelete: (() -> Unit)?,
 ) {
@@ -510,6 +573,77 @@ private fun PromptEditorDialog(
                 summary = stringRes(R.string.dictate__prompt_auto_apply_summary),
                 checked = autoApply,
                 onCheckedChange = { autoApply = it },
+            )
+            Spacer(Modifier.height(4.dp))
+            // Contribute this prompt to the community library (issue #105). Only offered once there is
+            // something worth sharing; the actual submission happens as a GitHub pull request.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = name.isNotBlank() && text.isNotBlank()) {
+                        onShare(name.trim(), text.trim(), requiresSelection, autoApply)
+                    }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Share,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = if (name.isNotBlank() && text.isNotBlank()) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                    },
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = stringRes(R.string.dictate__prompt_share_title),
+                    color = if (name.isNotBlank() && text.isNotBlank()) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The pinned entry point into the community prompt library (issue #105), shown at the top of the
+ * Prompts screen. A tinted, tappable banner so it is obvious without opening the overflow menu.
+ */
+@Composable
+private fun CommunityLibraryEntry(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        onClick = onClick,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Default.CloudDownload,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            Text(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 16.dp),
+                text = stringRes(R.string.dictate__prompt_library_menu),
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
             )
         }
     }

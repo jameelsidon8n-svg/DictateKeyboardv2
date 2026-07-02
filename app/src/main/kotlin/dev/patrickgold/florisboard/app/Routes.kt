@@ -63,6 +63,7 @@ import dev.patrickgold.florisboard.app.settings.dictate.DictateMappingsScreen
 import dev.patrickgold.florisboard.app.settings.dictate.DictateProvidersScreen
 import dev.patrickgold.florisboard.app.settings.dictate.DictateProxyScreen
 import dev.patrickgold.florisboard.app.settings.dictate.DictateWearScreen
+import dev.patrickgold.florisboard.app.settings.dictate.DictatePromptLibraryScreen
 import dev.patrickgold.florisboard.app.settings.dictate.DictatePromptsScreen
 import dev.patrickgold.florisboard.app.settings.dictate.DictateFloatingButtonScreen
 import dev.patrickgold.florisboard.app.settings.dictate.DictateRewordingScreen
@@ -157,6 +158,10 @@ object Routes {
         @Serializable
         @Deeplink("settings/dictate/prompts")
         data class DictatePrompts(val editPromptId: Int = -1)
+
+        @Serializable
+        @Deeplink("settings/dictate/prompts/library")
+        object DictatePromptLibrary
 
         @Serializable
         @Deeplink("settings/localization")
@@ -340,6 +345,7 @@ object Routes {
                 val payload = navBackStack.toRoute<Settings.DictatePrompts>()
                 DictatePromptsScreen(editPromptId = payload.editPromptId)
             }
+            composableWithDeepLink(Settings.DictatePromptLibrary::class) { DictatePromptLibraryScreen() }
 
             composableWithDeepLink(Settings.Localization::class) { LocalizationScreen() }
             composableWithDeepLink(Settings.SelectLocale::class) { SelectLocaleScreen() }

@@ -38,14 +38,13 @@ class AccessibilitySink : DictationSink {
     override fun deleteLastText(text: String): Boolean =
         DictateAccessibilityService.deleteLastText(text)
 
-    // The overlay has no composing/underline concept over AccessibilityService, and re-setting the whole
-    // field on every interim would be an accessibility-IPC flood (issue #147). So interim is skipped and
-    // only the finished text is written on finish (issue #128).
-    override fun setComposingText(text: String) { /* no interim over a11y */ }
+    // Re-setting the whole field on every interim over AccessibilityService would be an IPC flood (issue
+    // #147), so the overlay skips the live preview and only injects the finished text (issue #128).
+    override fun setDictationPreview(newText: String, prevText: String) { /* no interim over a11y */ }
 
-    override fun finishComposing(text: String) {
-        DictateAccessibilityService.injectText(text)
+    override fun commitDictationFinal(finalText: String, prevText: String) {
+        DictateAccessibilityService.injectText(finalText)
     }
 
-    override fun clearComposing() { /* nothing was shown */ }
+    override fun clearDictationPreview(prevText: String) { /* nothing was shown */ }
 }

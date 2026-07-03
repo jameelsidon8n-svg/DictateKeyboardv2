@@ -50,17 +50,18 @@ interface DictationSink {
     fun deleteLastText(text: String): Boolean
 
     /**
-     * Live real-time dictation (issue #128): show [text] as provisional/composing text that updates in
-     * place as more words stream in. The keyboard path underlines it; the overlay path has no composing
-     * concept, so it is a no-op there (the finished text is committed on [finishComposing] instead).
+     * Live real-time dictation preview (issue #128): reflect [newText] (the growing transcript) in the
+     * field, applying only the minimal diff from the [prevText] already shown — so streaming words appear
+     * in place, committed to the field. The overlay path has no cheap in-place update, so it skips the
+     * preview and shows nothing until [commitDictationFinal].
      */
-    fun setComposingText(text: String)
+    fun setDictationPreview(newText: String, prevText: String)
 
-    /** Finalize live dictation: replace the provisional text with the finished/reworded [text] and commit. */
-    fun finishComposing(text: String)
+    /** Finalize: replace the [prevText] preview with the finished/reworded [finalText] (minimal diff). */
+    fun commitDictationFinal(finalText: String, prevText: String)
 
-    /** Remove the provisional dictation text entirely (a realtime recording was cancelled). */
-    fun clearComposing()
+    /** Remove the [prevText] preview entirely (a realtime recording was cancelled / fell back to batch). */
+    fun clearDictationPreview(prevText: String)
 }
 
 /**
@@ -101,16 +102,24 @@ class ImeDictationSink(context: Context) : DictationSink {
         return true
     }
 
-    override fun setComposingText(text: String) {
-        editorInstance.setDictationComposingText(text)
-    }
+    override fun setDictationPreview(newText: String, prevText: String) = applyDictationDiff(prevText, newText)
 
-    override fun finishComposing(text: String) {
-        editorInstance.finalizeDictationComposing(text)
-    }
+    override fun commitDictationFinal(finalText: String, prevText: String) = applyDictationDiff(prevText, finalText)
 
-    override fun clearComposing() {
-        editorInstance.clearDictationComposing()
+    override fun clearDictationPreview(prevText: String) = applyDictationDiff(prevText, "")
+
+    /**
+     * Turns the currently-shown dictation text [old] into [new] with the minimal edit: keep the common
+     * prefix, delete the divergent tail (right before the cursor) and commit the new tail. Uses the
+     * editor's own commit/delete so it stays consistent with the content model (no composing-region
+     * collision). Append-only streaming (the common case) never deletes.
+     */
+    private fun applyDictationDiff(old: String, new: String) {
+        if (old == new) return
+        val cp = old.commonPrefixWith(new).length
+        if (cp < old.length) deleteLastText(old.substring(cp))
+        // Raw commit (no phantom/auto space) so the field stays byte-identical to what we tracked.
+        if (cp < new.length) editorInstance.commitTextRaw(new.substring(cp))
     }
 
     private companion object {

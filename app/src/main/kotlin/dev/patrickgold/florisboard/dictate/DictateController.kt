@@ -106,6 +106,8 @@ object DictateController {
             val kind: DictateApiException.Kind? = null,
             val action: ErrorAction = ErrorAction.NONE,
             val detail: String? = null,
+            /** Informational (not a failure), e.g. "no speech detected" — rendered neutral, not red. */
+            val neutral: Boolean = false,
         ) : UiState
         /**
          * Offer to send a recording that was interrupted because the keyboard closed mid-recording: the
@@ -658,6 +660,7 @@ object DictateController {
                     _state.value = UiState.Error(
                         message = appContext.getString(R.string.dictate__no_speech_detected),
                         action = ErrorAction.NONE,
+                        neutral = true, // informational, not a failure → white/themed, not red
                     )
                     return@launch // audio is dropped by the finally block
                 }

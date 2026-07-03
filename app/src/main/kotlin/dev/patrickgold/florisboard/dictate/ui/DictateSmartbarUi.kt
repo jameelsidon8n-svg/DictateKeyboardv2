@@ -334,8 +334,10 @@ private fun RowScope.ErrorContent(state: DictateController.UiState.Error) {
     var detailOpen by remember(state) { mutableStateOf(false) }
     val hasDetail = !state.detail.isNullOrBlank()
     val hasAction = state.action != DictateController.ErrorAction.NONE
-    // Errors are tinted a distinct red so they stand out from the normal (themed) Smartbar content.
-    val errorColor = Color(0xFFE53935)
+    // Real errors are tinted a distinct red so they stand out; informational notices (e.g. "no speech
+    // detected", issue #93) use the normal themed Smartbar foreground so they don't look like a failure.
+    val rowStyle = rememberSnyggThemeQuery(FlorisImeUi.SmartbarSharedActionsRow.elementName)
+    val errorColor = if (state.neutral) rowStyle.foreground() else Color(0xFFE53935)
 
     // Icon + message. Tappable when a raw provider detail is available, opening the detail popup below.
     Box(modifier = if (hasAction) Modifier.weight(1f) else Modifier) {

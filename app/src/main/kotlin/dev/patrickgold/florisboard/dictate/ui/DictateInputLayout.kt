@@ -73,6 +73,7 @@ fun DictateInputLayout(
     val context = LocalContext.current
     val keyboardManager by context.keyboardManager()
     val prompts by DictateController.prompts.collectAsState()
+    val livePromptActive by DictateController.livePromptActive.collectAsState()
     val scrollState = rememberScrollState()
     val prefs by FlorisPreferenceStore
     val accent by prefs.theme.accentColor.collectAsState() // follows the user's keyboard accent.
@@ -133,6 +134,8 @@ fun DictateInputLayout(
                 modifier = panelChipSpacing,
                 iconSize = panelIconSize,
                 tapPadding = panelTapPadding,
+                // Accent-highlight while its recording runs (tap again stops it — startLivePrompt toggles).
+                highlighted = livePromptActive,
                 onClick = {
                     DictateController.startLivePrompt(context)
                     // Return to the keyboard so the recording indicator + field stay visible.

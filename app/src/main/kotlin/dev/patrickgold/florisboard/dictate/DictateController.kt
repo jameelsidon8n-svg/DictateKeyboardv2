@@ -192,6 +192,14 @@ object DictateController {
      */
     val pendingPrompts: StateFlow<List<PromptModel>> = _pendingPrompts.asStateFlow()
 
+    private val _livePromptActive = MutableStateFlow(false)
+    /**
+     * True while a *live-prompt* recording is in progress, so the live-prompt chip can show the same
+     * accent highlight the queued prompt chips use. Tapping the chip again stops the recording (toggle),
+     * which clears this. Set/cleared alongside the recording lifecycle.
+     */
+    val livePromptActive: StateFlow<Boolean> = _livePromptActive.asStateFlow()
+
     private var recorder: RecordingController? = null
     private var startJob: Job? = null
 
@@ -415,6 +423,7 @@ object DictateController {
         unregisterScreenOffReceiver()
         cleanupAudioRouting()
         livePromptArmed = false
+        _livePromptActive.value = false
         _pendingPrompts.value = emptyList()
         // Cancelling a continued recording also throws away the carried-over interrupted segment.
         discardCarryOver()
@@ -499,9 +508,12 @@ object DictateController {
                 val audioSource = setupBluetoothIfEnabled(appContext)
                 recorder = RecordingController(appContext).also { it.start(audioSource) }
                 _state.value = UiState.Recording(SystemClock.elapsedRealtime(), accumulatedMs = seedAccumulatedMs)
+                // Highlight the live-prompt chip for the duration of a live-prompt recording.
+                _livePromptActive.value = livePromptArmed
                 registerScreenOffReceiver(appContext)
             } catch (t: Throwable) {
                 recorder = null
+                _livePromptActive.value = false
                 cleanupAudioRouting()
                 _state.value = UiState.Error(
                     // Most common cause is the missing RECORD_AUDIO permission (granted in onboarding).
@@ -514,6 +526,7 @@ object DictateController {
     private fun stopAndTranscribe(context: Context) {
         val activeRecorder = recorder
         recorder = null
+        _livePromptActive.value = false
         unregisterScreenOffReceiver()
         // Capture the recorded length before leaving the Recording state, to credit the usage counter
         // that gates the rate/donate nudges (roadmap 9.7/9.8). Includes any carried-over seconds.
@@ -976,6 +989,7 @@ object DictateController {
             return
         }
         recorder = null
+        _livePromptActive.value = false
         unregisterScreenOffReceiver()
         val seconds = recordedSecondsOf(current)
         val wasLive = livePromptArmed

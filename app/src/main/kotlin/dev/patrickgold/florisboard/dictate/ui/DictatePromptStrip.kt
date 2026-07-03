@@ -111,6 +111,7 @@ fun DictatePromptRow(
     val inputFeedbackController = LocalInputFeedbackController.current
     val dictateState by DictateController.state.collectAsState()
     val pending by DictateController.pendingPrompts.collectAsState()
+    val livePromptActive by DictateController.livePromptActive.collectAsState()
     val isCapturing = dictateState is DictateController.UiState.Recording ||
         dictateState is DictateController.UiState.Transcribing
     // Slightly taller than the Smartbar and with a touch of vertical padding inside each chip, so the
@@ -131,6 +132,8 @@ fun DictatePromptRow(
             tapPadding = rowChipPadding,
             // Compact row: show only the voice icon to leave more width for the saved-prompt chips.
             iconOnly = true,
+            // Accent-highlight it while its recording runs (tap again to stop — startLivePrompt toggles).
+            highlighted = livePromptActive,
         )
         prompts.forEach { prompt ->
             DictatePromptChip(
@@ -248,6 +251,7 @@ internal fun DictateLivePromptChip(
     iconSize: Dp = 18.dp,
     tapPadding: PaddingValues = PaddingValues(0.dp),
     iconOnly: Boolean = false,
+    highlighted: Boolean = false,
 ) {
     DictatePromptChip(
         icon = Icons.Default.RecordVoiceOver,
@@ -257,6 +261,7 @@ internal fun DictateLivePromptChip(
         iconSize = iconSize,
         tapPadding = tapPadding,
         iconOnly = iconOnly,
+        highlighted = highlighted,
     )
 }
 

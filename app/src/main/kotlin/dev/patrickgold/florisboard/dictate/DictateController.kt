@@ -1044,7 +1044,7 @@ object DictateController {
      * the dictation was started from the floating button (issue #88) and must inject into another app.
      * This single seam keeps the rest of the engine editor-agnostic.
      */
-    private fun sink(context: Context): DictationSink = when (outputTarget) {
+    fun sink(context: Context): DictationSink = when (outputTarget) {
         OutputTarget.IME -> ImeDictationSink(context)
         OutputTarget.OVERLAY -> AccessibilitySink()
     }

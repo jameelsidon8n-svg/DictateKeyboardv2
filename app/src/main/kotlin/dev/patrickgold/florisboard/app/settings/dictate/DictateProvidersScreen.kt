@@ -127,8 +127,7 @@ fun DictateProvidersScreen() = FlorisScreen {
                 entries = buildList {
                     ProviderRegistry.presets
                         .filter { it.capabilities.transcription }
-                        // Flag providers with real-time streaming support (issue #128) right in the label.
-                        .forEach { add(it.id to (it.displayName + if (it.supportsRealtime) " + Realtime" else "")) }
+                        .forEach { add(it.id to it.displayName) }
                     customAccounts.forEach { add(it.providerId to customLabel(it)) }
                 },
             )
@@ -158,7 +157,7 @@ fun DictateProvidersScreen() = FlorisScreen {
                     } else {
                         Icons.Default.Cloud
                     },
-                    title = preset.displayName + if (preset.supportsRealtime) " + Realtime" else "",
+                    title = preset.displayName,
                     summary = providerSummary(preset, account, keySet, noKey),
                     onClick = { editingId = preset.id },
                 )
@@ -435,7 +434,11 @@ private fun providerSummary(
         }
     }
     val caps = buildList {
-        if (preset.capabilities.transcription) add(stringRes(R.string.dictate__providers_cap_stt))
+        if (preset.capabilities.transcription) {
+            // Note streaming support (issue #128) right on the transcription capability.
+            val stt = stringRes(R.string.dictate__providers_cap_stt)
+            add(if (preset.supportsRealtime) "$stt (+ Realtime)" else stt)
+        }
         if (preset.capabilities.chat) add(stringRes(R.string.dictate__providers_cap_chat))
     }.joinToString(", ")
     val keyState = if (account?.hasKey == true) keySet else noKey

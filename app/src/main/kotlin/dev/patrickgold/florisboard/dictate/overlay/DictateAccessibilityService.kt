@@ -19,6 +19,7 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.SystemClock
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -362,6 +363,42 @@ class DictateAccessibilityService : AccessibilityService() {
         return true
     }
 
+    // --- Real-time dictation preview via the overlay (issue #128) ---------------------------------
+    // Live streaming into another app's field over AccessibilityService. Each accessibility write costs a
+    // node fetch + set, so preview updates are throttled and applied as a minimal diff (delete the changed
+    // tail, insert the new tail) rather than re-setting the whole field. [previewShown] tracks exactly what
+    // we have injected so the diff stays correct even when throttling skips intermediate updates.
+    private var previewShown = ""
+    private var lastPreviewMs = 0L
+
+    private fun applyPreviewDiff(old: String, new: String) {
+        if (old == new) return
+        val cp = old.commonPrefixWith(new).length
+        if (cp < old.length) deleteLastTextFromFocused(old.substring(cp))
+        if (cp < new.length) commitTextIntoFocused(new.substring(cp))
+    }
+
+    private fun setPreviewThrottled(full: String) {
+        if (full == previewShown) return
+        val now = SystemClock.uptimeMillis()
+        if (now - lastPreviewMs < PREVIEW_THROTTLE_MS) return   // skip; a later update catches up via the diff
+        applyPreviewDiff(previewShown, full)
+        previewShown = full
+        lastPreviewMs = now
+    }
+
+    private fun commitPreviewFinalOnFocused(finalText: String) {
+        applyPreviewDiff(previewShown, finalText)   // no throttle — final result always lands
+        previewShown = ""
+        lastPreviewMs = 0L
+    }
+
+    private fun clearPreviewOnFocused() {
+        if (previewShown.isNotEmpty()) applyPreviewDiff(previewShown, "")
+        previewShown = ""
+        lastPreviewMs = 0L
+    }
+
     /** The selected text in the focused editable field, or empty when nothing is selected. */
     private fun selectedTextOfFocused(): String {
         val node = focusedEditableNode() ?: return ""
@@ -504,6 +541,9 @@ class DictateAccessibilityService : AccessibilityService() {
         private const val MAX_EDITABLE_SEARCH_DEPTH = 6
         // Debounce window for focus re-checks so a typing burst triggers at most one focused-node fetch.
         private const val FOCUS_UPDATE_DEBOUNCE_MS = 150L
+        // Real-time overlay preview (#128): min gap between accessibility writes while streaming, so live
+        // typing into another app doesn't flood the accessibility channel.
+        private const val PREVIEW_THROTTLE_MS = 350L
 
         @Volatile
         private var instance: DictateAccessibilityService? = null
@@ -552,5 +592,14 @@ class DictateAccessibilityService : AccessibilityService() {
 
         /** Removes the last inserted [text] from the focused field (undo, #133); false when unavailable. */
         fun deleteLastText(text: String): Boolean = instance?.deleteLastTextFromFocused(text) ?: false
+
+        /** Real-time overlay preview (#128): throttled live update of the streamed text into the field. */
+        fun setPreview(full: String) { instance?.setPreviewThrottled(full) }
+
+        /** Replace the live preview with the finished/reworded [finalText] (unthrottled). */
+        fun commitPreviewFinal(finalText: String) { instance?.commitPreviewFinalOnFocused(finalText) }
+
+        /** Remove the live preview entirely (recording cancelled). */
+        fun clearPreview() { instance?.clearPreviewOnFocused() }
     }
 }

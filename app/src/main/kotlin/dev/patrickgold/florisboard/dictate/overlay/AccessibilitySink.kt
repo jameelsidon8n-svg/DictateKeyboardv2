@@ -38,13 +38,18 @@ class AccessibilitySink : DictationSink {
     override fun deleteLastText(text: String): Boolean =
         DictateAccessibilityService.deleteLastText(text)
 
-    // Re-setting the whole field on every interim over AccessibilityService would be an IPC flood (issue
-    // #147), so the overlay skips the live preview and only injects the finished text (issue #128).
-    override fun setDictationPreview(newText: String, prevText: String) { /* no interim over a11y */ }
-
-    override fun commitDictationFinal(finalText: String, prevText: String) {
-        DictateAccessibilityService.injectText(finalText)
+    // Real-time overlay preview (#128): the service tracks what it injected and applies a throttled minimal
+    // diff (so live streaming into another app doesn't flood the accessibility channel). It keeps its own
+    // shown-text state, so the sink's prevText is unused here.
+    override fun setDictationPreview(newText: String, prevText: String) {
+        DictateAccessibilityService.setPreview(newText)
     }
 
-    override fun clearDictationPreview(prevText: String) { /* nothing was shown */ }
+    override fun commitDictationFinal(finalText: String, prevText: String) {
+        DictateAccessibilityService.commitPreviewFinal(finalText)
+    }
+
+    override fun clearDictationPreview(prevText: String) {
+        DictateAccessibilityService.clearPreview()
+    }
 }

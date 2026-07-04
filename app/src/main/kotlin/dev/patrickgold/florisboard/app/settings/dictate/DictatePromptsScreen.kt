@@ -199,7 +199,7 @@ fun DictatePromptsScreen(
             text = { Text(stringRes(R.string.dictate__prompt_add)) },
             onClick = {
                 // -1 = a not-yet-persisted prompt; defaults mirror the legacy edit screen.
-                editorTarget = PromptModel(-1, 0, "", "", requiresSelection = true, autoApply = false)
+                editorTarget = PromptModel(-1, 0, "", "", requiresSelection = true, autoApply = false, isProfile = false)
             },
         )
     }
@@ -334,14 +334,14 @@ fun DictatePromptsScreen(
             PromptEditorDialog(
                 initial = target,
                 onDismiss = { editorTarget = null },
-                onShare = { name, text, requiresSelection, autoApply ->
-                    pendingShare = PromptModel(0, 0, name, text, requiresSelection, autoApply)
+                onShare = { name, text, requiresSelection, autoApply, isProfile ->
+                    pendingShare = PromptModel(0, 0, name, text, requiresSelection, autoApply, isProfile)
                 },
-                onSave = { name, text, requiresSelection, autoApply ->
+                onSave = { name, text, requiresSelection, autoApply, isProfile ->
                     scope.launch {
                         withContext(Dispatchers.IO) {
                             if (target.id < 0) {
-                                db.add(PromptModel(0, db.count(), name, text, requiresSelection, autoApply))
+                                db.add(PromptModel(0, db.count(), name, text, requiresSelection, autoApply, isProfile))
                             } else {
                                 db.update(
                                     target.copy(
@@ -349,6 +349,7 @@ fun DictatePromptsScreen(
                                         prompt = text,
                                         requiresSelection = requiresSelection,
                                         autoApply = autoApply,
+                                        isProfile = isProfile,
                                     ),
                                 )
                             }
@@ -545,14 +546,15 @@ private fun ImportModeDialog(
 private fun PromptEditorDialog(
     initial: PromptModel,
     onDismiss: () -> Unit,
-    onShare: (name: String, prompt: String, requiresSelection: Boolean, autoApply: Boolean) -> Unit,
-    onSave: (name: String, prompt: String, requiresSelection: Boolean, autoApply: Boolean) -> Unit,
+    onShare: (name: String, prompt: String, requiresSelection: Boolean, autoApply: Boolean, isProfile: Boolean) -> Unit,
+    onSave: (name: String, prompt: String, requiresSelection: Boolean, autoApply: Boolean, isProfile: Boolean) -> Unit,
     onDelete: (() -> Unit)?,
 ) {
     var name by remember { mutableStateOf(initial.name.orEmpty()) }
     var text by remember { mutableStateOf(initial.prompt.orEmpty()) }
     var requiresSelection by remember { mutableStateOf(initial.requiresSelection) }
     var autoApply by remember { mutableStateOf(initial.autoApply) }
+    var isProfile by remember { mutableStateOf(initial.isProfile) }
     var showError by remember { mutableStateOf(false) }
 
     JetPrefAlertDialog(
@@ -564,7 +566,7 @@ private fun PromptEditorDialog(
             if (name.isBlank() || text.isBlank()) {
                 showError = true
             } else {
-                onSave(name.trim(), text.trim(), requiresSelection, autoApply)
+                onSave(name.trim(), text.trim(), requiresSelection, autoApply, isProfile)
             }
         },
         dismissLabel = stringRes(R.string.action__cancel),
@@ -611,6 +613,13 @@ private fun PromptEditorDialog(
                 checked = autoApply,
                 onCheckedChange = { autoApply = it },
             )
+            Spacer(Modifier.height(8.dp))
+            SwitchRow(
+                title = "Profile",
+                summary = "Enable to set this prompt as a persistent, always-on voice alterer profile.",
+                checked = isProfile,
+                onCheckedChange = { isProfile = it },
+            )
             Spacer(Modifier.height(4.dp))
             // Contribute this prompt to the community library (issue #105). Only offered once there is
             // something worth sharing; the actual submission happens as a GitHub pull request.
@@ -618,7 +627,7 @@ private fun PromptEditorDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(enabled = name.isNotBlank() && text.isNotBlank()) {
-                        onShare(name.trim(), text.trim(), requiresSelection, autoApply)
+                        onShare(name.trim(), text.trim(), requiresSelection, autoApply, isProfile)
                     }
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,

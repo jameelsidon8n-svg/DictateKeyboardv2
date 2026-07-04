@@ -37,6 +37,7 @@ import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.RelativeLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -451,6 +452,13 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
     }
 
     private fun addPromptMenu(prompts: List<PromptModel>) {
+        val activeProfile = DictateController.activeProfilePrompt.value
+
+        // Separate profiles (requiresSelection is true) and one-time actions (requiresSelection is false)
+        val profiles = prompts.filter { it.isProfile }
+        val oneTimeActions = prompts.filter { it.isOneTimeAction }
+
+        // The outer big card
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedRect(color(R.color.dictate_overlay_menu_surface), dpf(16f))
@@ -459,32 +467,127 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
             isClickable = true // swallow taps so they don't dismiss via the scrim
             elevation = dpf(8f)
         }
-        prompts.forEach { prompt ->
-            val item = TextView(context).apply {
-                text = prompt.name
-                setTextColor(color(R.color.dictate_overlay_icon))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                val hz = dp(20)
-                val vt = dp(12)
-                setPadding(hz, vt, hz, vt)
-                setOnClickListener {
-                    hidePromptMenu()
-                    DictateController.togglePendingPrompt(prompt)
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.dictate__floating_button_undo_failed).replace(
-                            context.getString(R.string.dictate__floating_button_undo_failed),
-                            "Prompt armed: ${prompt.name}"
-                        ),
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
+
+        // Section 1: Prompt Profiles (Persistent)
+        if (profiles.isNotEmpty()) {
+            val profilesSection = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                background = roundedRect(ColorUtils.setAlphaComponent(color(R.color.dictate_overlay_menu_surface), 230), dpf(12f))
+                val p = dp(4)
+                setPadding(p, p, p, p)
             }
-            card.addView(item, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            ))
+            profiles.forEach { prompt ->
+                val isActive = activeProfile?.id == prompt.id
+                
+                // Outer item container using a horizontal layout to place checkmark on the far right
+                val row = RelativeLayout(context).apply {
+                    val hz = dp(20)
+                    val vt = dp(12)
+                    setPadding(hz, vt, hz, vt)
+                    isClickable = true
+                    background = roundedRect(Color.TRANSPARENT, 0f)
+                    
+                    setOnClickListener {
+                        hidePromptMenu()
+                        if (isActive) {
+                            DictateController.setActiveProfilePrompt(null)
+                            Toast.makeText(context, "Profile disabled", Toast.LENGTH_SHORT).show()
+                        } else {
+                            DictateController.setActiveProfilePrompt(prompt)
+                            Toast.makeText(context, "Profile set: ${prompt.name}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+
+                val label = TextView(context).apply {
+                    id = View.generateViewId()
+                    text = prompt.name
+                    setTextColor(color(R.color.dictate_overlay_icon))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                }
+
+                val labelParams = RelativeLayout.LayoutParams(
+                    RelativeLayout.LayoutParams.WRAP_CONTENT,
+                    RelativeLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    addRule(RelativeLayout.ALIGN_PARENT_LEFT, RelativeLayout.TRUE)
+                    addRule(RelativeLayout.CENTER_VERTICAL, RelativeLayout.TRUE)
+                }
+                row.addView(label, labelParams)
+
+                if (isActive) {
+                    val checkmark = TextView(context).apply {
+                        text = "✓"
+                        setTextColor(accentColor)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                        typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+                    }
+                    val checkParams = RelativeLayout.LayoutParams(
+                        RelativeLayout.LayoutParams.WRAP_CONTENT,
+                        RelativeLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        addRule(RelativeLayout.ALIGN_PARENT_RIGHT, RelativeLayout.TRUE)
+                        addRule(RelativeLayout.CENTER_VERTICAL, RelativeLayout.TRUE)
+                        setMargins(dp(16), 0, 0, 0)
+                    }
+                    row.addView(checkmark, checkParams)
+                }
+
+                profilesSection.addView(row, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ))
+            }
+            card.addView(profilesSection)
         }
+
+        // Draw a mid-thickness divider line separating the two categories
+        if (profiles.isNotEmpty() && oneTimeActions.isNotEmpty()) {
+            val divider = View(context).apply {
+                setBackgroundColor(color(R.color.dictate_overlay_icon))
+                alpha = 0.25f
+            }
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(2)).apply {
+                val m = dp(12)
+                setMargins(dp(8), m, dp(8), m)
+            }
+            card.addView(divider, lp)
+        }
+
+        // Section 2: One-Time Actions (Instant)
+        if (oneTimeActions.isNotEmpty()) {
+            val oneTimeSection = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                background = roundedRect(ColorUtils.setAlphaComponent(color(R.color.dictate_overlay_menu_surface), 230), dpf(12f))
+                val p = dp(4)
+                setPadding(p, p, p, p)
+            }
+            oneTimeActions.forEach { prompt ->
+                val item = TextView(context).apply {
+                    text = prompt.name
+                    setTextColor(color(R.color.dictate_overlay_icon))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                    val hz = dp(20)
+                    val vt = dp(12)
+                    setPadding(hz, vt, hz, vt)
+                    setOnClickListener {
+                        hidePromptMenu()
+                        // Fix the Instant Trigger Bug: invoke the API gateway immediately without arming
+                        DictateController.applyPrompt(
+                            context = context,
+                            prompt = prompt,
+                            target = DictateController.OutputTarget.OVERLAY
+                        )
+                    }
+                }
+                oneTimeSection.addView(item, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ))
+            }
+            card.addView(oneTimeSection)
+        }
+
         val scroll = ScrollView(context).apply {
             addView(card)
             val m = dp(24)

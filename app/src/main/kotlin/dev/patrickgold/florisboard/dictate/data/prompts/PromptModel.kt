@@ -37,6 +37,12 @@ data class PromptModel(
 ) {
     fun isPersisted(): Boolean = id >= 0
 
+    val isProfile: Boolean
+        get() = requiresSelection
+
+    val isOneTimeAction: Boolean
+        get() = !requiresSelection
+
     companion object {
         const val ID_INSTANT_PROMPT = -1
         const val ID_ADD_PROMPT = -2

@@ -207,7 +207,11 @@ object DictateController {
     val activeProfilePrompt: StateFlow<PromptModel?> = _activeProfilePrompt.asStateFlow()
 
     fun setActiveProfilePrompt(prompt: PromptModel?) {
+        android.util.Log.d("DictateController", "setActiveProfilePrompt called with ID: ${prompt?.id}")
         _activeProfilePrompt.value = prompt
+        scope.launch {
+            prefs.dictate.activeProfilePromptId.set(prompt?.id ?: -1)
+        }
     }
 
     private val _livePromptActive = MutableStateFlow(false)
@@ -375,7 +379,23 @@ object DictateController {
     fun refreshPrompts(context: Context) {
         val appContext = context.applicationContext
         scope.launch {
-            _prompts.value = withContext(Dispatchers.IO) { promptsDb(appContext).getAll() }
+            val list = withContext(Dispatchers.IO) { promptsDb(appContext).getAll() }
+            _prompts.value = list
+            
+            // Step D: Restore the active profile ID from SharedPreferences
+            val savedProfileId = prefs.dictate.activeProfilePromptId.get()
+            android.util.Log.d("DictateController", "refreshPrompts restoring active profile ID from preferences: $savedProfileId")
+            if (savedProfileId >= 0) {
+                val matched = list.firstOrNull { it.id == savedProfileId }
+                if (matched != null) {
+                    android.util.Log.d("DictateController", "Matched restored active profile prompt: ${matched.name}")
+                    _activeProfilePrompt.value = matched
+                } else {
+                    _activeProfilePrompt.value = null
+                }
+            } else {
+                _activeProfilePrompt.value = null
+            }
         }
     }
 
@@ -1657,13 +1677,16 @@ object DictateController {
 
         // 1.5) Active Prompt Profile (Persistent Spoken voice alterer)
         val activeProfile = _activeProfilePrompt.value
+        android.util.Log.d("DictateController", "postProcessTranscript running with activeProfile: ${activeProfile?.id} (${activeProfile?.name})")
         if (activeProfile != null) {
             val instruction = activeProfile.prompt.orEmpty()
             if (instruction.isNotBlank()) {
+                android.util.Log.d("DictateController", "postProcessTranscript applying activeProfile prompt instruction: $instruction")
                 _state.value = UiState.Rewording(activeProfile.name ?: context.getString(R.string.dictate__status_rewording))
                 text = runCatching {
                     requestReword(instruction, text)
                 }.getOrDefault(text)
+                android.util.Log.d("DictateController", "postProcessTranscript result after activeProfile: $text")
             }
         }
 

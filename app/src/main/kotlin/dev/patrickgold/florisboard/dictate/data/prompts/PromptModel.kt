@@ -34,14 +34,12 @@ data class PromptModel(
     var prompt: String?,
     var requiresSelection: Boolean,
     var autoApply: Boolean,
+    var isProfile: Boolean = false,
 ) {
     fun isPersisted(): Boolean = id >= 0
 
-    val isProfile: Boolean
-        get() = requiresSelection
-
     val isOneTimeAction: Boolean
-        get() = !requiresSelection
+        get() = !isProfile
 
     companion object {
         const val ID_INSTANT_PROMPT = -1

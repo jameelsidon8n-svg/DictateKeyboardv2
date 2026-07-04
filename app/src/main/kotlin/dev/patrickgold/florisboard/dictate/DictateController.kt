@@ -199,6 +199,17 @@ object DictateController {
      */
     val pendingPrompts: StateFlow<List<PromptModel>> = _pendingPrompts.asStateFlow()
 
+    private val _activeProfilePrompt = MutableStateFlow<PromptModel?>(null)
+    /**
+     * The active global Profile Prompt (or Prompt Profile). When armed, this alters your spoken voice
+     * persistent recording instructions across recording sessions.
+     */
+    val activeProfilePrompt: StateFlow<PromptModel?> = _activeProfilePrompt.asStateFlow()
+
+    fun setActiveProfilePrompt(prompt: PromptModel?) {
+        _activeProfilePrompt.value = prompt
+    }
+
     private val _livePromptActive = MutableStateFlow(false)
     /**
      * True while a *live-prompt* recording is in progress, so the live-prompt chip can show the same
@@ -1695,9 +1706,11 @@ object DictateController {
      */
     private suspend fun requestReword(instruction: String, input: String?): String {
         val sys = systemPrompt()
+        val profilePrompt = _activeProfilePrompt.value?.prompt.orEmpty()
         val content = buildString {
             append(instruction)
             if (sys.isNotBlank()) append("\n\n").append(sys)
+            if (profilePrompt.isNotBlank()) append("\n\n").append(profilePrompt)
             if (!input.isNullOrBlank()) append("\n\n").append(input)
         }
         return requestRewordRaw(content)

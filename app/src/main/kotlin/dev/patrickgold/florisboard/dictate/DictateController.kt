@@ -315,7 +315,7 @@ object DictateController {
      * No-op outside the recording/transcribing states or for non-persisted prompts.
      */
     fun togglePendingPrompt(prompt: PromptModel) {
-        if (_state.value !is UiState.Recording && _state.value !is UiState.Transcribing) return
+        if (_state.value !is UiState.Recording && _state.value !is UiState.Transcribing && _state.value !is UiState.Idle && _state.value !is UiState.Error) return
         if (!prompt.isPersisted()) return
         val current = _pendingPrompts.value
         _pendingPrompts.value = if (current.any { it.id == prompt.id }) {
@@ -464,9 +464,7 @@ object DictateController {
         _pendingPrompts.value = emptyList()
         // Cancelling a continued recording also throws away the carried-over interrupted segment.
         discardCarryOver()
-        if (_state.value is UiState.Recording) {
-            _state.value = UiState.Idle
-        }
+        _state.value = UiState.Idle
     }
 
     /** Kept for the legacy in-keyboard panel; identical to [cancelRecording]. */

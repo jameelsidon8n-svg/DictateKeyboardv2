@@ -469,9 +469,15 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                 setPadding(hz, vt, hz, vt)
                 setOnClickListener {
                     hidePromptMenu()
-                    DictateController.applyPrompt(
-                        context, prompt, target = DictateController.OutputTarget.OVERLAY,
-                    )
+                    DictateController.togglePendingPrompt(prompt)
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.dictate__floating_button_undo_failed).replace(
+                            context.getString(R.string.dictate__floating_button_undo_failed),
+                            "Prompt armed: ${prompt.name}"
+                        ),
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
             card.addView(item, LinearLayout.LayoutParams(
@@ -824,7 +830,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
         // Promote the service to a microphone foreground service *before* recording starts, so the mic
         // capture is allowed while the app is in the background (Android 14+). Demoted again when the
         // dictation finishes (see manageForeground).
-        val starting = DictateController.state.value is DictateController.UiState.Idle
+        val starting = DictateController.state.value is DictateController.UiState.Idle || DictateController.state.value is DictateController.UiState.Error
         if (starting) {
             service.startMicForeground()
             weStartedDictation = true

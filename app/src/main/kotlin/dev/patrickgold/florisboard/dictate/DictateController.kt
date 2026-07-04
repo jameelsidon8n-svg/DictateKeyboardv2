@@ -1655,6 +1655,18 @@ object DictateController {
             }
         }
 
+        // 1.5) Active Prompt Profile (Persistent Spoken voice alterer)
+        val activeProfile = _activeProfilePrompt.value
+        if (activeProfile != null) {
+            val instruction = activeProfile.prompt.orEmpty()
+            if (instruction.isNotBlank()) {
+                _state.value = UiState.Rewording(activeProfile.name ?: context.getString(R.string.dictate__status_rewording))
+                text = runCatching {
+                    requestReword(instruction, text)
+                }.getOrDefault(text)
+            }
+        }
+
         // 2) Auto-apply prompts, in POS order; each operates on the running text if it needs input.
         val autoApply = withContext(Dispatchers.IO) {
             promptsDb(context).getAll().filter { it.autoApply }

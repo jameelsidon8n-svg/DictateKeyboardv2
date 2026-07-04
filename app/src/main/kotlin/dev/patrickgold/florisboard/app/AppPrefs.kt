@@ -421,7 +421,11 @@ abstract class FlorisPreferenceModel : PreferenceModel() {
         // default to keep the overlay minimal; needs "remember last dictation" to have something to undo.
         val floatingButtonUndoEnabled = boolean(
             key = "dictate__floating_button_undo_enabled",
-            default = false,
+            default = true,
+        )
+        val activeProfilePromptId = int(
+            key = "dictate__active_profile_prompt_id",
+            default = -1,
         )
         // Whether the user has opened the floating-button screen at least once (clears the "New" badge).
         val floatingButtonHintSeen = boolean(

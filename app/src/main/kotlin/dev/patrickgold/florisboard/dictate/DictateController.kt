@@ -864,14 +864,10 @@ object DictateController {
      * apply or the session can't be created — the caller then records normally (batch).
      */
     private fun openRealtimeSession(appContext: Context): ((ByteArray, Int) -> Unit)? {
-        val api = realtimeApiForActiveAccount() ?: run {
-            android.util.Log.i("DictateRT", "realtime NOT active → batch")
-            return null
-        }
+        val api = realtimeApiForActiveAccount() ?: return null
         val account = transcriptionAccount()
         val preset = presetFor(account)
         val model = account.realtimeModel.takeIf { it.isNotBlank() } ?: preset.defaultRealtimeModel ?: return null
-        android.util.Log.i("DictateRT", "opening realtime session api=$api model=$model")
         val language = prefs.dictate.activeInputLanguage.get().takeIf { it != DictateLanguages.DETECT }
         realtimeFinal.setLength(0)
         realtimeFailed = false
@@ -952,7 +948,6 @@ object DictateController {
                 // The transcript is what we already streamed into the field (finals + last partial); fall
                 // back to the finalized-segments buffer only if nothing was shown.
                 val transcript = realtimeShown.toString().trim().ifEmpty { realtimeFinal.toString().trim() }
-                android.util.Log.i("DictateRT", "stop finalize: failed=$realtimeFailed len=${transcript.length} wav=${wavFile?.length() ?: -1}")
                 _interimText.value = ""
                 if (realtimeFailed || transcript.isEmpty()) {
                     // Drop the live provisional text; the batch path commits fresh from the WAV.

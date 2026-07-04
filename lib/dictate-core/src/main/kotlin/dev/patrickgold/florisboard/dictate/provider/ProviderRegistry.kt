@@ -197,8 +197,8 @@ object ProviderRegistry {
         // Realtime (#128): Voxtral realtime (/v1/realtime, vLLM-style). Model id verified when built.
         supportsRealtime = true,
         realtimeApi = RealtimeApi.MISTRAL_VOXTRAL,
-        defaultRealtimeModel = "voxtral-mini-transcribe-realtime",
-        curatedRealtimeModels = listOf("voxtral-mini-transcribe-realtime"),
+        defaultRealtimeModel = "voxtral-mini-transcribe-realtime-2602",
+        curatedRealtimeModels = listOf("voxtral-mini-transcribe-realtime-2602"),
     )
 
     val SONIOX = ProviderPreset(

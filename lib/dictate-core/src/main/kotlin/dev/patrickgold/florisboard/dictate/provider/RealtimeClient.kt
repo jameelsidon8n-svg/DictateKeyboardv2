@@ -12,12 +12,15 @@ package dev.patrickgold.florisboard.dictate.provider
 
 import android.util.Base64
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -27,9 +30,10 @@ import okio.ByteString.Companion.toByteString
 import java.util.concurrent.TimeUnit
 
 /**
- * Opens real-time transcription sessions (issue #128). Implements OpenAI ([RealtimeApi.OPENAI], JSON
- * base64 audio) and Deepgram ([RealtimeApi.DEEPGRAM], raw binary PCM); the remaining providers
- * ([RealtimeApi.SONIOX] etc.) are declared but not yet wired and throw until their sessions are built.
+ * Opens real-time transcription sessions (issue #128). Implements all seven [RealtimeApi] wire formats:
+ * OpenAI and ElevenLabs/Gemini send audio as base64 in JSON; Deepgram/Soniox/AssemblyAI/Mistral stream
+ * raw binary PCM. Mistral is experimental (its raw protocol is SDK-only/unverified). On any error the
+ * caller falls back to batch transcription.
  *
  * The WebSocket client is long-lived (no read/call timeout, periodic ping), separate from the batch HTTP
  * client. Callers keep the batch [OpenAiCompatibleClient] for the fallback path.
@@ -66,10 +70,11 @@ object RealtimeClient {
     ): RealtimeSession = when (api) {
         RealtimeApi.OPENAI -> OpenAiRealtimeSession(wsClient, apiKey, model, language, callbacks).also { it.connect() }
         RealtimeApi.DEEPGRAM -> DeepgramRealtimeSession(wsClient, apiKey, model, language, callbacks).also { it.connect() }
-        else -> throw DictateApiException(
-            DictateApiException.Kind.UNKNOWN,
-            "Real-time transcription for $api is not implemented yet",
-        )
+        RealtimeApi.SONIOX -> SonioxRealtimeSession(wsClient, apiKey, model, language, callbacks).also { it.connect() }
+        RealtimeApi.ASSEMBLYAI -> AssemblyAiRealtimeSession(wsClient, apiKey, model, language, callbacks).also { it.connect() }
+        RealtimeApi.ELEVENLABS -> ElevenLabsRealtimeSession(wsClient, apiKey, model, language, callbacks).also { it.connect() }
+        RealtimeApi.GEMINI -> GeminiRealtimeSession(wsClient, apiKey, model, language, callbacks).also { it.connect() }
+        RealtimeApi.MISTRAL_VOXTRAL -> MistralRealtimeSession(wsClient, apiKey, model, language, callbacks).also { it.connect() }
     }
 }
 
@@ -194,6 +199,472 @@ private class OpenAiRealtimeSession(
     private fun finishClosed(webSocket: WebSocket?) {
         if (done) return
         done = true
+        runCatching { (webSocket ?: ws)?.close(1000, null) }
+        callbacks.onClosed()
+    }
+}
+
+/**
+ * Soniox streaming transcription over `wss://stt-rt.soniox.com/transcribe-websocket`. The API key and
+ * config go in the first JSON message (no auth header); 16 kHz mono PCM16 is streamed as raw binary
+ * frames. Each `tokens[]` message carries `is_final` tokens (permanent) plus a replaceable tail; the full
+ * text (permanent + tail) is emitted as the partial, and the permanent text as the final on flush. An
+ * empty frame flushes; the server replies `finished:true` and closes.
+ */
+private class SonioxRealtimeSession(
+    private val client: OkHttpClient,
+    private val apiKey: String,
+    private val model: String,
+    private val language: String?,
+    private val callbacks: RealtimeCallbacks,
+) : RealtimeSession {
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private var ws: WebSocket? = null
+    private val permanent = StringBuilder()
+    @Volatile private var done = false
+
+    private companion object { const val URL = "wss://stt-rt.soniox.com/transcribe-websocket" }
+
+    fun connect() {
+        ws = client.newWebSocket(Request.Builder().url(URL).build(), listener)
+    }
+
+    private val listener = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            webSocket.send(config())
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
+            obj["tokens"]?.jsonArray?.let { tokens ->
+                val tail = StringBuilder()
+                for (tk in tokens) {
+                    val o = tk.jsonObject
+                    val txt = o["text"]?.jsonPrimitive?.content ?: continue
+                    if (o["is_final"]?.jsonPrimitive?.booleanOrNull == true) permanent.append(txt) else tail.append(txt)
+                }
+                callbacks.onPartial(permanent.toString() + tail)
+            }
+            if (obj["finished"]?.jsonPrimitive?.booleanOrNull == true) finalizeAndClose(webSocket)
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            android.util.Log.w("DictateRT", "soniox realtime WS failed (http=${response?.code}): ${t.message}")
+            emitError(t)
+        }
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = finalizeAndClose(webSocket)
+    }
+
+    private fun config(): String = buildJsonObject {
+        put("api_key", apiKey)
+        put("model", model)
+        put("audio_format", "pcm_s16le")
+        put("sample_rate", 16_000)
+        put("num_channels", 1)
+        if (!language.isNullOrBlank() && language != "detect") {
+            put("language_hints", buildJsonArray { add(language) })
+        }
+    }.toString()
+
+    override fun sendAudio(pcm16: ByteArray, len: Int) {
+        runCatching { ws?.send(pcm16.toByteString(0, len)) }
+    }
+
+    override fun finish() {
+        val socket = ws ?: return finalizeAndClose(null)
+        runCatching { socket.send("") }   // empty frame → flush + finished
+    }
+
+    override fun cancel() {
+        done = true
+        runCatching { ws?.close(1000, null) }
+        callbacks.onClosed()
+    }
+
+    private fun emitError(t: Throwable) {
+        if (done) return
+        done = true
+        runCatching { ws?.cancel() }
+        callbacks.onError(t)
+        callbacks.onClosed()
+    }
+
+    private fun finalizeAndClose(webSocket: WebSocket?) {
+        if (done) return
+        done = true
+        if (permanent.isNotEmpty()) callbacks.onFinalSegment(permanent.toString())
+        runCatching { (webSocket ?: ws)?.close(1000, null) }
+        callbacks.onClosed()
+    }
+}
+
+/**
+ * AssemblyAI Universal Streaming over `wss://streaming.assemblyai.com/v3/ws` (config in query params, raw
+ * key in the `Authorization` header — no "Bearer"). Streams 16 kHz mono PCM16 as raw binary frames. `Turn`
+ * messages carry the current turn text in `transcript`; `end_of_turn` finalizes it. `format_turns` is off
+ * (our rewording stage formats), so each turn produces one clean final. `finish()` sends `Terminate`.
+ */
+private class AssemblyAiRealtimeSession(
+    private val client: OkHttpClient,
+    private val apiKey: String,
+    private val model: String,
+    private val language: String?,
+    private val callbacks: RealtimeCallbacks,
+) : RealtimeSession {
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private var ws: WebSocket? = null
+    @Volatile private var done = false
+
+    private companion object {
+        const val URL = "wss://streaming.assemblyai.com/v3/ws?sample_rate=16000&encoding=pcm_s16le"
+    }
+
+    fun connect() {
+        // Universal Streaming is selected by the /v3/ws endpoint itself; the raw key goes in Authorization.
+        val request = Request.Builder().url(URL).header("Authorization", apiKey).build()
+        ws = client.newWebSocket(request, listener)
+    }
+
+    private val listener = object : WebSocketListener() {
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
+            when (obj["type"]?.jsonPrimitive?.content) {
+                "Turn" -> {
+                    val transcript = obj["transcript"]?.jsonPrimitive?.content.orEmpty()
+                    if (transcript.isBlank()) return
+                    if (obj["end_of_turn"]?.jsonPrimitive?.booleanOrNull == true) {
+                        callbacks.onFinalSegment(transcript)
+                    } else {
+                        callbacks.onPartial(transcript)
+                    }
+                }
+                "Termination" -> finishClosed(webSocket)
+            }
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            android.util.Log.w("DictateRT", "assemblyai realtime WS failed (http=${response?.code}): ${t.message}")
+            emitError(t)
+        }
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = finishClosed(webSocket)
+    }
+
+    override fun sendAudio(pcm16: ByteArray, len: Int) {
+        runCatching { ws?.send(pcm16.toByteString(0, len)) }
+    }
+
+    override fun finish() {
+        val socket = ws ?: return finishClosed(null)
+        runCatching { socket.send("""{"type":"Terminate"}""") }
+    }
+
+    override fun cancel() {
+        done = true
+        runCatching { ws?.close(1000, null) }
+        callbacks.onClosed()
+    }
+
+    private fun emitError(t: Throwable) {
+        if (done) return
+        done = true
+        runCatching { ws?.cancel() }
+        callbacks.onError(t)
+        callbacks.onClosed()
+    }
+
+    private fun finishClosed(webSocket: WebSocket?) {
+        if (done) return
+        done = true
+        runCatching { (webSocket ?: ws)?.close(1000, null) }
+        callbacks.onClosed()
+    }
+}
+
+/**
+ * ElevenLabs Scribe realtime over `wss://api.elevenlabs.io/v1/speech-to-text/realtime` (config in query
+ * params, `xi-api-key` header). 16 kHz mono PCM16 is sent base64 in `input_audio_chunk` messages;
+ * `partial_transcript`/`committed_transcript` messages carry the text in `text`. `finish()` sends a final
+ * chunk with `commit:true` so the server flushes the last committed transcript.
+ */
+private class ElevenLabsRealtimeSession(
+    private val client: OkHttpClient,
+    private val apiKey: String,
+    private val model: String,
+    private val language: String?,
+    private val callbacks: RealtimeCallbacks,
+) : RealtimeSession {
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private var ws: WebSocket? = null
+    @Volatile private var done = false
+
+    fun connect() {
+        val lang = if (!language.isNullOrBlank() && language != "detect") "&language_code=$language" else ""
+        val url = "wss://api.elevenlabs.io/v1/speech-to-text/realtime" +
+            "?model_id=$model&audio_format=pcm_16000&commit_strategy=vad$lang"
+        val request = Request.Builder().url(url).header("xi-api-key", apiKey).build()
+        ws = client.newWebSocket(request, listener)
+    }
+
+    private val listener = object : WebSocketListener() {
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
+            val body = obj["text"]?.jsonPrimitive?.content.orEmpty()
+            when (obj["message_type"]?.jsonPrimitive?.content) {
+                "partial_transcript" -> if (body.isNotBlank()) callbacks.onPartial(body)
+                "committed_transcript", "committed_transcript_with_timestamps" ->
+                    if (body.isNotBlank()) callbacks.onFinalSegment(body)
+            }
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            android.util.Log.w("DictateRT", "elevenlabs realtime WS failed (http=${response?.code}): ${t.message}")
+            emitError(t)
+        }
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = finishClosed(webSocket)
+    }
+
+    override fun sendAudio(pcm16: ByteArray, len: Int) {
+        val bytes = if (len == pcm16.size) pcm16 else pcm16.copyOf(len)
+        val msg = buildJsonObject {
+            put("message_type", "input_audio_chunk")
+            put("audio_base_64", Base64.encodeToString(bytes, Base64.NO_WRAP))
+            put("commit", false)
+            put("sample_rate", 16_000)
+        }.toString()
+        runCatching { ws?.send(msg) }
+    }
+
+    override fun finish() {
+        val socket = ws ?: return finishClosed(null)
+        val msg = buildJsonObject {
+            put("message_type", "input_audio_chunk")
+            put("audio_base_64", "")
+            put("commit", true)
+        }.toString()
+        runCatching { socket.send(msg) }
+    }
+
+    override fun cancel() {
+        done = true
+        runCatching { ws?.close(1000, null) }
+        callbacks.onClosed()
+    }
+
+    private fun emitError(t: Throwable) {
+        if (done) return
+        done = true
+        runCatching { ws?.cancel() }
+        callbacks.onError(t)
+        callbacks.onClosed()
+    }
+
+    private fun finishClosed(webSocket: WebSocket?) {
+        if (done) return
+        done = true
+        runCatching { (webSocket ?: ws)?.close(1000, null) }
+        callbacks.onClosed()
+    }
+}
+
+/**
+ * Google Gemini Live over the BidiGenerateContent WebSocket (`?key=` auth). A `setup` message enables
+ * input-audio transcription (TEXT response modality); 16 kHz mono PCM16 is sent base64 as `realtimeInput`.
+ * Input transcript chunks arrive in `serverContent.inputTranscription.text` and are concatenated. `finish()`
+ * sends `audioStreamEnd`; the last chunks flush and `turnComplete`/`generationComplete` closes the session.
+ */
+private class GeminiRealtimeSession(
+    private val client: OkHttpClient,
+    private val apiKey: String,
+    private val model: String,
+    private val language: String?,
+    private val callbacks: RealtimeCallbacks,
+) : RealtimeSession {
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private var ws: WebSocket? = null
+    private val transcript = StringBuilder()
+    @Volatile private var finishing = false
+    @Volatile private var done = false
+
+    fun connect() {
+        val url = "wss://generativelanguage.googleapis.com/ws/" +
+            "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey"
+        ws = client.newWebSocket(Request.Builder().url(url).build(), listener)
+    }
+
+    private val listener = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            webSocket.send(setup())
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) = handle(webSocket, text)
+        override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) = handle(webSocket, bytes.utf8())
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            android.util.Log.w("DictateRT", "gemini realtime WS failed (http=${response?.code}): ${t.message}")
+            emitError(t)
+        }
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = finalizeAndClose(webSocket)
+    }
+
+    private fun handle(webSocket: WebSocket, text: String) {
+        val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
+        val server = obj["serverContent"]?.jsonObject
+        server?.get("inputTranscription")?.jsonObject?.get("text")?.jsonPrimitive?.content?.let { chunk ->
+            if (chunk.isNotEmpty()) {
+                transcript.append(chunk)
+                callbacks.onPartial(transcript.toString())
+            }
+        }
+        val ended = server?.get("turnComplete")?.jsonPrimitive?.booleanOrNull == true ||
+            server?.get("generationComplete")?.jsonPrimitive?.booleanOrNull == true
+        if (ended && finishing) finalizeAndClose(webSocket)
+    }
+
+    private fun setup(): String = buildJsonObject {
+        putJsonObject("setup") {
+            put("model", "models/$model")
+            putJsonObject("generationConfig") {
+                put("responseModalities", buildJsonArray { add("TEXT") })
+            }
+            putJsonObject("inputAudioTranscription") { }
+        }
+    }.toString()
+
+    override fun sendAudio(pcm16: ByteArray, len: Int) {
+        val bytes = if (len == pcm16.size) pcm16 else pcm16.copyOf(len)
+        val msg = buildJsonObject {
+            putJsonObject("realtimeInput") {
+                putJsonObject("audio") {
+                    put("data", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                    put("mimeType", "audio/pcm;rate=16000")
+                }
+            }
+        }.toString()
+        runCatching { ws?.send(msg) }
+    }
+
+    override fun finish() {
+        val socket = ws ?: return finalizeAndClose(null)
+        finishing = true
+        runCatching { socket.send("""{"realtimeInput":{"audioStreamEnd":true}}""") }
+    }
+
+    override fun cancel() {
+        done = true
+        runCatching { ws?.close(1000, null) }
+        callbacks.onClosed()
+    }
+
+    private fun emitError(t: Throwable) {
+        if (done) return
+        done = true
+        runCatching { ws?.cancel() }
+        callbacks.onError(t)
+        callbacks.onClosed()
+    }
+
+    private fun finalizeAndClose(webSocket: WebSocket?) {
+        if (done) return
+        done = true
+        if (transcript.isNotEmpty()) callbacks.onFinalSegment(transcript.toString())
+        runCatching { (webSocket ?: ws)?.close(1000, null) }
+        callbacks.onClosed()
+    }
+}
+
+/**
+ * Mistral Voxtral realtime (`voxtral-mini-transcribe-realtime-2602`). EXPERIMENTAL/UNVERIFIED: Mistral
+ * only documents this via its SDK, so the raw WebSocket path, handshake and event field names here are a
+ * best-effort reconstruction and may not match the live wire format — a mismatch simply closes the socket
+ * and the engine falls back to batch transcription. Assumes `Authorization: Bearer` auth, a JSON config
+ * with the audio format, binary PCM frames, and `*TextDelta`/`*Done`-style events carrying `text`.
+ */
+private class MistralRealtimeSession(
+    private val client: OkHttpClient,
+    private val apiKey: String,
+    private val model: String,
+    private val language: String?,
+    private val callbacks: RealtimeCallbacks,
+) : RealtimeSession {
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private var ws: WebSocket? = null
+    private val transcript = StringBuilder()
+    @Volatile private var done = false
+
+    private companion object { const val URL = "wss://api.mistral.ai/v1/audio/transcriptions/realtime" }
+
+    fun connect() {
+        val request = Request.Builder().url(URL).header("Authorization", "Bearer $apiKey").build()
+        ws = client.newWebSocket(request, listener)
+    }
+
+    private val listener = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            webSocket.send(config())
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
+            val type = obj["type"]?.jsonPrimitive?.content.orEmpty()
+            when {
+                type.contains("TextDelta", ignoreCase = true) || type.contains("delta", ignoreCase = true) -> {
+                    val chunk = obj["text"]?.jsonPrimitive?.content
+                        ?: obj["delta"]?.jsonPrimitive?.content ?: return
+                    transcript.append(chunk)
+                    callbacks.onPartial(transcript.toString())
+                }
+                type.contains("Done", ignoreCase = true) || type.contains("completed", ignoreCase = true) ->
+                    finalizeAndClose(webSocket)
+            }
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            android.util.Log.w("DictateRT", "mistral realtime WS failed (http=${response?.code}): ${t.message}")
+            emitError(t)
+        }
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = finalizeAndClose(webSocket)
+    }
+
+    private fun config(): String = buildJsonObject {
+        put("type", "transcription_session.update")
+        put("model", model)
+        put("encoding", "pcm_s16le")
+        put("sample_rate", 16_000)
+        if (!language.isNullOrBlank() && language != "detect") put("language", language)
+    }.toString()
+
+    override fun sendAudio(pcm16: ByteArray, len: Int) {
+        runCatching { ws?.send(pcm16.toByteString(0, len)) }
+    }
+
+    override fun finish() {
+        val socket = ws ?: return finalizeAndClose(null)
+        runCatching { socket.send("""{"type":"transcription_session.close"}""") }
+    }
+
+    override fun cancel() {
+        done = true
+        runCatching { ws?.close(1000, null) }
+        callbacks.onClosed()
+    }
+
+    private fun emitError(t: Throwable) {
+        if (done) return
+        done = true
+        runCatching { ws?.cancel() }
+        callbacks.onError(t)
+        callbacks.onClosed()
+    }
+
+    private fun finalizeAndClose(webSocket: WebSocket?) {
+        if (done) return
+        done = true
+        if (transcript.isNotEmpty()) callbacks.onFinalSegment(transcript.toString())
         runCatching { (webSocket ?: ws)?.close(1000, null) }
         callbacks.onClosed()
     }

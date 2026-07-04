@@ -39,7 +39,7 @@ class PromptsDatabaseHelper private constructor(
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE PROMPTS (ID INTEGER PRIMARY KEY, POS INTEGER, NAME TEXT, PROMPT TEXT, " +
-                "REQUIRES_SELECTION BOOLEAN, AUTO_APPLY BOOLEAN DEFAULT 0)"
+                "REQUIRES_SELECTION BOOLEAN, AUTO_APPLY BOOLEAN DEFAULT 0, IS_PROFILE BOOLEAN DEFAULT 0)"
         )
         // Seed the example prompts for fresh installs only (existing users skip onCreate). These are
         // the same defaults the legacy Dictate app shipped, resolved from string resources so they are
@@ -51,14 +51,21 @@ class PromptsDatabaseHelper private constructor(
                 put("PROMPT", context.getString(seed.promptRes))
                 put("REQUIRES_SELECTION", if (seed.requiresSelection) 1 else 0)
                 put("AUTO_APPLY", 0)
+                put("IS_PROFILE", 0)
             }
             db.insert("PROMPTS", null, cv)
         }
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 2) {
+        var currentVer = oldVersion
+        if (currentVer < 2) {
             db.execSQL("ALTER TABLE PROMPTS ADD COLUMN AUTO_APPLY BOOLEAN DEFAULT 0")
+            currentVer = 2
+        }
+        if (currentVer < 3) {
+            db.execSQL("ALTER TABLE PROMPTS ADD COLUMN IS_PROFILE BOOLEAN DEFAULT 0")
+            currentVer = 3
         }
     }
 
@@ -159,6 +166,7 @@ class PromptsDatabaseHelper private constructor(
         put("PROMPT", prompt)
         put("REQUIRES_SELECTION", if (requiresSelection) 1 else 0)
         put("AUTO_APPLY", if (autoApply) 1 else 0)
+        put("IS_PROFILE", if (isProfile) 1 else 0)
     }
 
     private fun android.database.Cursor.toPromptModel() = PromptModel(
@@ -168,13 +176,14 @@ class PromptsDatabaseHelper private constructor(
         prompt = getString(getColumnIndexOrThrow("PROMPT")),
         requiresSelection = getInt(getColumnIndexOrThrow("REQUIRES_SELECTION")) == 1,
         autoApply = getInt(getColumnIndexOrThrow("AUTO_APPLY")) == 1,
+        isProfile = getColumnIndex("IS_PROFILE").let { if (it >= 0) getInt(it) == 1 else false },
     )
 
     private data class Seed(val nameRes: Int, val promptRes: Int, val requiresSelection: Boolean)
 
     companion object {
         const val DATABASE_NAME = "prompts.db"
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 3
 
         @Volatile
         private var instance: PromptsDatabaseHelper? = null

@@ -458,22 +458,22 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
         val profiles = prompts.filter { it.isProfile }
         val oneTimeActions = prompts.filter { it.isOneTimeAction }
 
-        // The outer big card
+        // The outer big card - constrained to be smaller and tight (half-width scale, tightly constrained)
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = roundedRect(color(R.color.dictate_overlay_menu_surface), dpf(16f))
-            val p = dp(8)
+            val p = dp(6)
             setPadding(p, p, p, p)
             isClickable = true // swallow taps so they don't dismiss via the scrim
             elevation = dpf(8f)
         }
 
-        // Section 1: Prompt Profiles (Persistent)
+        // Section 1: Prompt Profiles (Persistent) - Styled as a nested card inside the master card
         if (profiles.isNotEmpty()) {
             val profilesSection = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                background = roundedRect(ColorUtils.setAlphaComponent(color(R.color.dictate_overlay_menu_surface), 230), dpf(12f))
-                val p = dp(4)
+                background = roundedRect(ColorUtils.setAlphaComponent(color(R.color.dictate_overlay_menu_surface), 210), dpf(12f))
+                val p = dp(3)
                 setPadding(p, p, p, p)
             }
             profiles.forEach { prompt ->
@@ -481,8 +481,8 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                 
                 // Outer item container using a horizontal layout to place checkmark on the far right
                 val row = RelativeLayout(context).apply {
-                    val hz = dp(20)
-                    val vt = dp(12)
+                    val hz = dp(14)
+                    val vt = dp(8)
                     setPadding(hz, vt, hz, vt)
                     isClickable = true
                     background = roundedRect(Color.TRANSPARENT, 0f)
@@ -503,7 +503,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                     id = View.generateViewId()
                     text = prompt.name
                     setTextColor(color(R.color.dictate_overlay_icon))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                 }
 
                 val labelParams = RelativeLayout.LayoutParams(
@@ -519,7 +519,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                     val checkmark = TextView(context).apply {
                         text = "✓"
                         setTextColor(accentColor)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
                         typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
                     }
                     val checkParams = RelativeLayout.LayoutParams(
@@ -528,7 +528,7 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                     ).apply {
                         addRule(RelativeLayout.ALIGN_PARENT_RIGHT, RelativeLayout.TRUE)
                         addRule(RelativeLayout.CENTER_VERTICAL, RelativeLayout.TRUE)
-                        setMargins(dp(16), 0, 0, 0)
+                        setMargins(dp(12), 0, 0, 0)
                     }
                     row.addView(checkmark, checkParams)
                 }
@@ -545,30 +545,30 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
         if (profiles.isNotEmpty() && oneTimeActions.isNotEmpty()) {
             val divider = View(context).apply {
                 setBackgroundColor(color(R.color.dictate_overlay_icon))
-                alpha = 0.25f
+                alpha = 0.2f
             }
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(2)).apply {
-                val m = dp(12)
-                setMargins(dp(8), m, dp(8), m)
+                val m = dp(8)
+                setMargins(dp(6), m, dp(6), m)
             }
             card.addView(divider, lp)
         }
 
-        // Section 2: One-Time Actions (Instant)
+        // Section 2: One-Time Actions (Instant) - Styled as another nested card inside the master card
         if (oneTimeActions.isNotEmpty()) {
             val oneTimeSection = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                background = roundedRect(ColorUtils.setAlphaComponent(color(R.color.dictate_overlay_menu_surface), 230), dpf(12f))
-                val p = dp(4)
+                background = roundedRect(ColorUtils.setAlphaComponent(color(R.color.dictate_overlay_menu_surface), 210), dpf(12f))
+                val p = dp(3)
                 setPadding(p, p, p, p)
             }
             oneTimeActions.forEach { prompt ->
                 val item = TextView(context).apply {
                     text = prompt.name
                     setTextColor(color(R.color.dictate_overlay_icon))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                    val hz = dp(20)
-                    val vt = dp(12)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                    val hz = dp(14)
+                    val vt = dp(8)
                     setPadding(hz, vt, hz, vt)
                     setOnClickListener {
                         hidePromptMenu()
@@ -588,28 +588,37 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
             card.addView(oneTimeSection)
         }
 
+        // Make scrollable and limit to a tight, compact size (4x4 screen scale helper layout)
         val scroll = ScrollView(context).apply {
             addView(card)
-            val m = dp(24)
+            val m = dp(12)
             setPadding(m, m, m, m)
             clipToPadding = false
         }
+        
+        // Wrap everything in a compact, touch-through FrameLayout
         val scrim = FrameLayout(context).apply {
-            setBackgroundColor(0x66000000.toInt())
+            setBackgroundColor(0x55000000.toInt()) // lighter premium dim scrim
             setOnClickListener { hidePromptMenu() }
+            
+            // Constrain outer container layout to wrap-content and center it tightly
             addView(scroll, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
+                dp(250), // Explicit compact width (horizontal fit matching the tight ratios)
+                dp(340), // Shorter and scrollable vertical length limit
                 Gravity.CENTER,
             ))
         }
+
+        // WRAP_CONTENT instead of MATCH_PARENT: allows gestures to pass directly to applications outside of the menu card boundaries!
         val lp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
-        )
+        ).apply {
+            gravity = Gravity.CENTER
+        }
         menuView = scrim
         runCatching {
             windowManager.addView(scrim, lp)

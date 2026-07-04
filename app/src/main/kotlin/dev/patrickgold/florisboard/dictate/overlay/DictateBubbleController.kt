@@ -454,45 +454,98 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
     private fun addPromptMenu(prompts: List<PromptModel>) {
         val activeProfile = DictateController.activeProfilePrompt.value
 
-        // Separate profiles (requiresSelection is true) and one-time actions (requiresSelection is false)
         val profiles = prompts.filter { it.isProfile }
         val oneTimeActions = prompts.filter { it.isOneTimeAction }
 
-        // The outer big card - constrained to be smaller and tight (half-width scale, tightly constrained)
+        // The outer big card - constrained to be smaller, dark card matching design reference image
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundedRect(color(R.color.dictate_overlay_menu_surface), dpf(16f))
-            val p = dp(6)
+            // Dark glassmorphism background (#1a1a1a) with thin white border at 30% opacity
+            val bg = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dpf(12f)
+                setColor(0xFF1A1A1A.toInt())
+                setStroke(dp(1), 0x4DFFFFFF.toInt()) // 30% white border
+            }
+            background = bg
+            val p = dp(12)
             setPadding(p, p, p, p)
             isClickable = true // swallow taps so they don't dismiss via the scrim
             elevation = dpf(8f)
         }
 
-        // Section 1: Prompt Profiles (Persistent) - Styled as a nested card inside the master card
+        // Top thin drag handle: center-aligned white bar, 32dp wide, 3dp tall, 40% opacity
+        val dragHandle = View(context).apply {
+            val bg = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dpf(1.5f)
+                setColor(0x66FFFFFF.toInt()) // 40% white
+            }
+            background = bg
+        }
+        val dragLp = LinearLayout.LayoutParams(dp(32), dp(3)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setMargins(0, 0, 0, dp(12))
+        }
+        card.addView(dragHandle, dragLp)
+
+        // Header: Close "X" button in top-right corner
+        val headerLayout = RelativeLayout(context).apply {
+            val closeBtn = TextView(context).apply {
+                text = "✕"
+                setTextColor(0xFF888888.toInt()) // gray #888
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                gravity = Gravity.CENTER
+                setOnClickListener { hidePromptMenu() }
+            }
+            val closeLp = RelativeLayout.LayoutParams(dp(20), dp(20)).apply {
+                addRule(RelativeLayout.ALIGN_PARENT_RIGHT, RelativeLayout.TRUE)
+            }
+            addView(closeBtn, closeLp)
+        }
+        card.addView(headerLayout, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        // Section 1: Profiles
         if (profiles.isNotEmpty()) {
+            val profilesHeader = TextView(context).apply {
+                text = "PROFILES"
+                setTextColor(0xFF999999.toInt()) // color #999
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f) // 10sp
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                setPadding(dp(4), dp(4), dp(4), dp(4))
+            }
+            card.addView(profilesHeader, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, dp(6), 0, dp(4)) })
+
             val profilesSection = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                background = roundedRect(ColorUtils.setAlphaComponent(color(R.color.dictate_overlay_menu_surface), 210), dpf(12f))
-                val p = dp(3)
-                setPadding(p, p, p, p)
             }
-            profiles.forEach { prompt ->
+            
+            profiles.forEachIndexed { index, prompt ->
                 val isActive = activeProfile?.id == prompt.id
                 
-                // Outer item container using a horizontal layout to place checkmark on the far right
+                // Stacked vertical pill buttons, 32dp height, alternating backgrounds (#2a2a2a / #2e2e2e)
                 val row = RelativeLayout(context).apply {
-                    val hz = dp(14)
-                    val vt = dp(8)
-                    setPadding(hz, vt, hz, vt)
+                    val bgHex = if (index % 2 == 0) 0xFF2A2A2A.toInt() else 0xFF2E2E2E.toInt()
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dpf(6f) // subtle 6dp corner radius
+                        setColor(bgHex)
+                    }
                     isClickable = true
-                    background = roundedRect(Color.TRANSPARENT, 0f)
-                    
                     setOnClickListener {
                         hidePromptMenu()
                         if (isActive) {
+                            android.util.Log.d("DictateBubbleController", "Toggling active profile off, passing null")
                             DictateController.setActiveProfilePrompt(null)
                             Toast.makeText(context, "Profile disabled", Toast.LENGTH_SHORT).show()
                         } else {
+                            android.util.Log.d("DictateBubbleController", "Setting active profile, passing prompt ID: ${prompt.id}")
                             DictateController.setActiveProfilePrompt(prompt)
                             Toast.makeText(context, "Profile set: ${prompt.name}", Toast.LENGTH_SHORT).show()
                         }
@@ -502,8 +555,9 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                 val label = TextView(context).apply {
                     id = View.generateViewId()
                     text = prompt.name
-                    setTextColor(color(R.color.dictate_overlay_icon))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                    setTextColor(Color.WHITE) // clean white sans-serif
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f) // 13sp
+                    typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
                 }
 
                 val labelParams = RelativeLayout.LayoutParams(
@@ -512,15 +566,17 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                 ).apply {
                     addRule(RelativeLayout.ALIGN_PARENT_LEFT, RelativeLayout.TRUE)
                     addRule(RelativeLayout.CENTER_VERTICAL, RelativeLayout.TRUE)
+                    setMargins(dp(12), 0, 0, 0)
                 }
                 row.addView(label, labelParams)
 
+                // Active profile indicator: thin accent left border (or right checkmark)
                 if (isActive) {
                     val checkmark = TextView(context).apply {
                         text = "✓"
                         setTextColor(accentColor)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                        typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                        typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
                     }
                     val checkParams = RelativeLayout.LayoutParams(
                         RelativeLayout.LayoutParams.WRAP_CONTENT,
@@ -528,50 +584,70 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                     ).apply {
                         addRule(RelativeLayout.ALIGN_PARENT_RIGHT, RelativeLayout.TRUE)
                         addRule(RelativeLayout.CENTER_VERTICAL, RelativeLayout.TRUE)
-                        setMargins(dp(12), 0, 0, 0)
+                        setMargins(0, 0, dp(12), 0)
                     }
                     row.addView(checkmark, checkParams)
                 }
 
-                profilesSection.addView(row, LinearLayout.LayoutParams(
+                val rowLp = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                ))
+                    dp(32) // 32dp height
+                ).apply {
+                    setMargins(0, dp(2), 0, dp(2))
+                }
+                profilesSection.addView(row, rowLp)
             }
             card.addView(profilesSection)
         }
 
-        // Draw a mid-thickness divider line separating the two categories
+        // Divider: 1px line at 30% opacity separating the two sections
         if (profiles.isNotEmpty() && oneTimeActions.isNotEmpty()) {
             val divider = View(context).apply {
-                setBackgroundColor(color(R.color.dictate_overlay_icon))
-                alpha = 0.2f
+                setBackgroundColor(0x4DFFFFFF.toInt()) // 30% white
             }
-            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(2)).apply {
-                val m = dp(8)
-                setMargins(dp(6), m, dp(6), m)
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                setMargins(0, dp(12), 0, dp(12))
             }
             card.addView(divider, lp)
         }
 
-        // Section 2: One-Time Actions (Instant) - Styled as another nested card inside the master card
+        // Section 2: Actions
         if (oneTimeActions.isNotEmpty()) {
-            val oneTimeSection = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                background = roundedRect(ColorUtils.setAlphaComponent(color(R.color.dictate_overlay_menu_surface), 210), dpf(12f))
-                val p = dp(3)
-                setPadding(p, p, p, p)
+            val actionsHeader = TextView(context).apply {
+                text = "ACTIONS"
+                setTextColor(0xFF999999.toInt()) // color #999
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f) // 10sp
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                setPadding(dp(4), dp(4), dp(4), dp(4))
             }
+            card.addView(actionsHeader, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, dp(6), 0, dp(4)) })
+
+            val actionsSection = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+            }
+            
             oneTimeActions.forEach { prompt ->
-                val item = TextView(context).apply {
-                    text = prompt.name
-                    setTextColor(color(R.color.dictate_overlay_icon))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                    val hz = dp(14)
-                    val vt = dp(8)
-                    setPadding(hz, vt, hz, vt)
+                // Stacked vertical pill buttons, identical style but with thin white stroke border (#444) instead of dark fill
+                val row = RelativeLayout(context).apply {
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dpf(6f) // subtle 6dp corner radius
+                        setColor(Color.TRANSPARENT)
+                        setStroke(dp(1), 0xFF444444.toInt()) // thin border #444
+                    }
+                    isClickable = true
                     setOnClickListener {
                         hidePromptMenu()
+
+                        // Issue 2: If requiresSelection (Selection Required) is true but there's no selection, select all.
+                        val sink = DictateController.sink(context)
+                        if (prompt.requiresSelection && sink.selectedText().isEmpty()) {
+                            sink.selectAll()
+                        }
+
                         // Fix the Instant Trigger Bug: invoke the API gateway immediately without arming
                         DictateController.applyPrompt(
                             context = context,
@@ -580,44 +656,85 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
                         )
                     }
                 }
-                oneTimeSection.addView(item, LinearLayout.LayoutParams(
+
+                val label = TextView(context).apply {
+                    id = View.generateViewId()
+                    text = prompt.name
+                    setTextColor(Color.WHITE) // clean white sans-serif
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f) // 13sp
+                    typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
+                }
+
+                val labelParams = RelativeLayout.LayoutParams(
+                    RelativeLayout.LayoutParams.WRAP_CONTENT,
+                    RelativeLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    addRule(RelativeLayout.ALIGN_PARENT_LEFT, RelativeLayout.TRUE)
+                    addRule(RelativeLayout.CENTER_VERTICAL, RelativeLayout.TRUE)
+                    setMargins(dp(12), 0, 0, 0)
+                }
+                row.addView(label, labelParams)
+
+                val rowLp = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                ))
+                    dp(32) // 32dp height
+                ).apply {
+                    setMargins(0, dp(2), 0, dp(2))
+                }
+                actionsSection.addView(row, rowLp)
             }
-            card.addView(oneTimeSection)
+            card.addView(actionsSection)
         }
 
-        // Make scrollable and limit to a tight, compact size (4x4 screen scale helper layout)
+        // Make scrollable and limit to a tight, compact size matching the spec
         val scroll = ScrollView(context).apply {
             addView(card)
-            val m = dp(12)
-            setPadding(m, m, m, m)
             clipToPadding = false
         }
         
-        // Wrap everything in a compact, touch-through FrameLayout
-        val scrim = FrameLayout(context).apply {
-            setBackgroundColor(0x55000000.toInt()) // lighter premium dim scrim
+        // Wrap everything in a semi-transparent black background (#000 at 50% opacity) scrim
+        val scrim = object : FrameLayout(context) {
+            override fun onTouchEvent(event: MotionEvent): Boolean {
+                if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                    hidePromptMenu()
+                    return true
+                }
+                return super.onTouchEvent(event)
+            }
+        }.apply {
+            setBackgroundColor(0x80000000.toInt()) // 50% black opacity
             setOnClickListener { hidePromptMenu() }
             
-            // Constrain outer container layout to wrap-content and center it tightly
+            // Constrain outer container layout: width ~220dp, max height ~360dp
             addView(scroll, FrameLayout.LayoutParams(
-                dp(250), // Explicit compact width (horizontal fit matching the tight ratios)
-                dp(340), // Shorter and scrollable vertical length limit
+                dp(220), 
+                FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER,
-            ))
+            ).apply {
+                height = FrameLayout.LayoutParams.WRAP_CONTENT
+            })
         }
+
+        // Query status/navigation bar heights (rough status bar = 24dp, nav bar = 48dp) to avoid overlapping
+        val statusBarHeight = dp(24)
+        val navBarHeight = dp(48)
+        val availableHeight = (screenHeight() - statusBarHeight - navBarHeight).coerceAtLeast(0)
 
         // WRAP_CONTENT instead of MATCH_PARENT: allows gestures to pass directly to applications outside of the menu card boundaries!
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.CENTER
+            // Set margins to completely constrain the popup BELOW the status bar and ABOVE the nav bar
+            topMargin = statusBarHeight
+            bottomMargin = navBarHeight
         }
         menuView = scrim
         runCatching {

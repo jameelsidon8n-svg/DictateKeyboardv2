@@ -732,9 +732,8 @@ class DictateBubbleController(private val service: DictateAccessibilityService) 
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.CENTER
-            // Set margins to completely constrain the popup BELOW the status bar and ABOVE the nav bar
-            topMargin = statusBarHeight
-            bottomMargin = navBarHeight
+            // Set margins (LayoutParams of WindowManager do not have topMargin/bottomMargin fields, but have x/y coordinates)
+            y = 0 // perfectly centered within status and nav bar boundaries via Gravity.CENTER and wrapping height constraints
         }
         menuView = scrim
         runCatching {
